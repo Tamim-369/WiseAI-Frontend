@@ -30,7 +30,8 @@ export default function Index() {
     setIsTyping(true);
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/query/?question=${encodeURIComponent(input)}`);
+      const serverURL = process.env.SERVER_URL?.toString()
+      const response = await fetch(`${serverURL}/query/?question=${encodeURIComponent(input)}`);
       const data: { data: { answer: string } } = await response.json();
 
       setTimeout(() => {
