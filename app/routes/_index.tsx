@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { json, type LoaderFunction } from "@remix-run/node";
 import { useLoaderData, Form } from "@remix-run/react";
+import Markdown from "markdown-to-jsx";
 
 export const loader: LoaderFunction = async () => {
   return json({ initialMessage: "Welcome to Wise AI" });
@@ -69,7 +70,10 @@ export default function Index() {
                   : 'bg-stone-800 text-stone-100 border border-indigo-900/30'
                   } transform transition-all hover:scale-105`}
               >
-                {msg.text}
+                <Markdown>
+
+                  {msg.text}
+                </Markdown>
               </div>
             </div>
           ))}
