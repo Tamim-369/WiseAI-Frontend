@@ -42,7 +42,7 @@ export default function Index() {
     setIsTyping(true);
 
     try {
-      const serverURL = 'http://127.0.0.1:8000';
+      const serverURL = 'http://wiseai.onrender.com';
       const response = await fetch(`${serverURL}/query`, {
         method: "post",
         headers: {
