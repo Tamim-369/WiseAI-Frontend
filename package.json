@@ -16,7 +16,9 @@
     "@remix-run/serve": "^2.16.0",
     "isbot": "^4.1.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "tailwind-scrollbar": "^4.0.1",
+    "tailwindcss-scroll-snap": "^1.1.0"
   },
   "devDependencies": {
     "@remix-run/dev": "^2.16.0",
