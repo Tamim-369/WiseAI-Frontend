@@ -30,7 +30,7 @@ export default function Index() {
     setIsTyping(true);
 
     try {
-      const serverURL = process.env.SERVER_URL?.toString()
+      const serverURL = process.env.SERVER_URL?.toString() || 'https://wiseai.onrender.com'
       const response = await fetch(`${serverURL}/query/?question=${encodeURIComponent(input)}`);
       const data: { data: { answer: string } } = await response.json();
 
