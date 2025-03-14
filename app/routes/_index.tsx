@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunction } from "@remix-run/node";
 import { useLoaderData, Form } from "@remix-run/react";
 import Markdown from "markdown-to-jsx";
@@ -16,7 +16,18 @@ export default function Index() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState<string>("");
   const [isTyping, setIsTyping] = useState<boolean>(false);
+  const [chatHistory, setChatHistory] = useState<any>([]);
   const { initialMessage } = useLoaderData<{ initialMessage: string }>();
+  
+  // Create a ref for the chat container
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to bottom whenever messages change
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages, isTyping]);
 
   useEffect(() => {
     setMessages([{ text: initialMessage, isUser: false }]);
@@ -31,15 +42,31 @@ export default function Index() {
     setIsTyping(true);
 
     try {
-      const serverURL = process.env.SERVER_URL?.toString() || 'https://wiseai.onrender.com'
-      const response = await fetch(`${serverURL}/query/?question=${encodeURIComponent(input)}`);
-      const data: { data: { answer: string } } = await response.json();
+      const serverURL = 'http://127.0.0.1:8000';
+      const response = await fetch(`${serverURL}/query`, {
+        method: "post",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          question: input,
+          chat_history: chatHistory
+        })
+      });
 
+      const data: { data: { answer: string } } = await response.json();
+      setChatHistory((prev:any) => [
+        ...prev,
+        { role: "user", content: input },
+        { role: "assistant", content: data.data.answer },
+      ]);
       setTimeout(() => {
         setMessages(prev => [...prev, { text: data.data.answer, isUser: false }]);
         setIsTyping(false);
       }, 1000);
+      console.log(chatHistory);
     } catch (error) {
+      console.log(error);
       setMessages(prev => [...prev, { text: "The wise one ponders in silence...", isUser: false }]);
       setIsTyping(false);
     }
@@ -57,8 +84,11 @@ export default function Index() {
           <p className="text-indigo-300 text-sm">Ancient Wisdom Meets Modern Intelligence</p>
         </div>
 
-        {/* Chat Area */}
-        <div className="h-[500px] overflow-y-auto p-6 space-y-4 scrollbar-thin scrollbar-thumb-indigo-900 scrollbar-track-stone-900">
+        {/* Chat Area - added ref here */}
+        <div 
+          ref={chatContainerRef}
+          className="h-[500px] overflow-y-auto p-6 space-y-4 scrollbar-thin scrollbar-thumb-indigo-900 scrollbar-track-stone-900"
+        >
           {messages.map((msg, index) => (
             <div
               key={index}
@@ -71,7 +101,6 @@ export default function Index() {
                   } transform transition-all hover:scale-105`}
               >
                 <Markdown>
-
                   {msg.text}
                 </Markdown>
               </div>
@@ -107,8 +136,6 @@ export default function Index() {
           </div>
         </Form>
       </div>
-
-
     </div>
   );
 }
