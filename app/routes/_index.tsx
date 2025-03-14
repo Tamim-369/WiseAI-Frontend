@@ -46,7 +46,7 @@ export default function Index() {
         ...prev,
         { role: "user", content: input },
       ]);
-      const serverURL = 'http://wiseai.onrender.com';
+      const serverURL = 'https://wiseai.onrender.com';
       const response = await fetch(`${serverURL}/query`, {
         method: "post",
         headers: {
