@@ -1,17 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunction } from "@remix-run/node";
-import { useLoaderData, Form } from "@remix-run/react";
-import Markdown from "markdown-to-jsx";
 import { MdKeyboardVoice } from "react-icons/md";
+import { useLoaderData } from "@remix-run/react";
 
 export const loader: LoaderFunction = async () => {
   return json({ initialMessage: "Welcome to Wise AI" });
 };
-
-interface Message {
-  text: string;
-  isUser: boolean;
-}
 
 interface SpeechRecognition extends EventTarget {
   continuous: boolean;
@@ -33,15 +27,12 @@ declare global {
 }
 
 export default function Index() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState<string>("");
-  const [isTyping, setIsTyping] = useState<boolean>(false);
+  const [isListening, setIsListening] = useState<boolean>(false);
   const [isStreamingAudio, setIsStreamingAudio] = useState<boolean>(false);
   const [chatHistory, setChatHistory] = useState<any[]>([]);
-  const [isListening, setIsListening] = useState<boolean>(false);
   const { initialMessage } = useLoaderData<{ initialMessage: string }>();
-  const chatContainerRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionStateRef = useRef<"idle" | "running" | "aborted">("idle");
   const mediaSourceRef = useRef<MediaSource | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sourceBufferRef = useRef<SourceBuffer | null>(null);
@@ -61,20 +52,33 @@ export default function Index() {
 
     recognition.onresult = (event) => {
       const transcript = event.results[event.results.length - 1][0].transcript;
-      setInput(transcript);
       handleVoiceSubmit(transcript);
     };
 
     recognition.onerror = (event) => {
-      console.error("Speech recognition error:", event.error);
+      if (event.error !== "aborted") {
+        console.error("Speech recognition error:", event.error);
+      }
+      recognitionStateRef.current = "aborted";
       if (isListening && event.error !== "aborted") {
-        setTimeout(() => recognition.start(), 100);
+        setTimeout(() => {
+          if (recognitionStateRef.current !== "running") {
+            recognition.start();
+            recognitionStateRef.current = "running";
+          }
+        }, 200);
       }
     };
 
     recognition.onend = () => {
+      recognitionStateRef.current = "idle";
       if (isListening) {
-        setTimeout(() => recognition.start(), 100);
+        setTimeout(() => {
+          if (recognitionStateRef.current !== "running") {
+            recognition.start();
+            recognitionStateRef.current = "running";
+          }
+        }, 200);
       }
     };
 
@@ -83,6 +87,7 @@ export default function Index() {
     return () => {
       if (recognitionRef.current) {
         recognitionRef.current.abort();
+        recognitionStateRef.current = "aborted";
       }
     };
   }, [isListening]);
@@ -90,31 +95,14 @@ export default function Index() {
   // Control listening state
   useEffect(() => {
     if (!recognitionRef.current) return;
-    if (isListening) recognitionRef.current.start();
-    else recognitionRef.current.abort();
-  }, [isListening]);
-
-  // Scroll to bottom
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    if (isListening && recognitionStateRef.current !== "running") {
+      recognitionRef.current.start();
+      recognitionStateRef.current = "running";
+    } else if (!isListening && recognitionStateRef.current === "running") {
+      recognitionRef.current.abort();
+      recognitionStateRef.current = "aborted";
     }
-  }, [messages, isTyping, isStreamingAudio]);
-
-  useEffect(() => {
-    setMessages([{ text: initialMessage, isUser: false }]);
-  }, [initialMessage]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-    await processMessage(input);
-  };
-
-  const handleVoiceSubmit = async (text: string) => {
-    if (!text.trim()) return;
-    await processMessage(text);
-  };
+  }, [isListening]);
 
   const setupMediaSource = () => {
     if (!mediaSourceRef.current) {
@@ -130,13 +118,12 @@ export default function Index() {
     }
   };
 
-  const processMessage = async (text: string) => {
-    setMessages((prev) => [...prev, { text, isUser: true }]);
-    setInput("");
-    setIsTyping(true);
+  const handleVoiceSubmit = async (text: string) => {
+    if (!text.trim()) return;
+    setChatHistory((prev) => [...prev, { role: "user", content: text }]);
+    setIsStreamingAudio(true);
 
     try {
-      setChatHistory((prev) => [...prev, { role: "user", content: text }]);
       const serverURL = "http://127.0.0.1:8000";
       const response = await fetch(`${serverURL}/query/`, {
         method: "POST",
@@ -149,7 +136,6 @@ export default function Index() {
       }
 
       setupMediaSource();
-      setIsStreamingAudio(true);
       const reader = response.body.getReader();
 
       const processStream = async () => {
@@ -159,9 +145,7 @@ export default function Index() {
             if (mediaSourceRef.current?.readyState === "open") {
               mediaSourceRef.current.endOfStream();
             }
-            setIsTyping(false);
             setIsStreamingAudio(false);
-            setMessages((prev) => [...prev, { text: "Audio response completed", isUser: false }]);
             setChatHistory((prev) => [
               ...prev,
               { role: "assistant", content: "Audio response" },
@@ -185,16 +169,24 @@ export default function Index() {
 
       if (isListening && recognitionRef.current) {
         recognitionRef.current.abort();
-        setTimeout(() => recognitionRef.current?.start(), 100);
+        setTimeout(() => {
+          if (recognitionStateRef.current !== "running") {
+            recognitionRef.current?.start();
+            recognitionStateRef.current = "running";
+          }
+        }, 200);
       }
     } catch (error) {
       console.error("Streaming error:", error);
-      setMessages((prev) => [...prev, { text: "The wise one ponders in silence...", isUser: false }]);
-      setIsTyping(false);
       setIsStreamingAudio(false);
       if (isListening && recognitionRef.current) {
         recognitionRef.current.abort();
-        setTimeout(() => recognitionRef.current?.start(), 100);
+        setTimeout(() => {
+          if (recognitionStateRef.current !== "running") {
+            recognitionRef.current?.start();
+            recognitionStateRef.current = "running";
+          }
+        }, 200);
       }
     }
   };
@@ -204,79 +196,38 @@ export default function Index() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-stone-950 via-indigo-950 to-purple-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl bg-stone-900/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden border border-indigo-900/50">
-        <div className="bg-gradient-to-r from-indigo-900 to-purple-900 p-4 border-b border-indigo-900/70">
-          <h1 className="text-2xl font-bold text-indigo-100 flex items-center gap-2">
-            <span className="w-3 h-3 bg-emerald-600 rounded-full animate-pulse"></span>
-            Wise AI
-          </h1>
-          <p className="text-indigo-300 text-sm">Ancient Wisdom Meets Modern Intelligence</p>
-        </div>
-
+    <div className="min-h-screen bg-gradient-to-br from-stone-950 via-indigo-950 to-purple-950 flex items-center justify-center">
+      <div className="relative flex items-center justify-center">
+        {/* Outer Circle */}
         <div
-          ref={chatContainerRef}
-          className="h-[500px] overflow-y-auto p-6 space-y-4 scrollbar-thin scrollbar-thumb-indigo-900 scrollbar-track-stone-900"
+          className={`w-48 h-48 rounded-full bg-stone-900/95 border-4 transition-all duration-300 ${isListening ? "border-red-900" : "border-indigo-900"
+            } flex items-center justify-center`}
         >
-          {messages.map((msg, index) => (
-            <div
-              key={index}
-              className={`flex ${msg.isUser ? "justify-end" : "justify-start"} animate-slideIn`}
-            >
-              <div
-                className={`max-w-[70%] p-4 rounded-xl ${msg.isUser
-                  ? "bg-indigo-900 text-indigo-100"
-                  : "bg-stone-800 text-stone-100 border border-indigo-900/30"
-                  } transform transition-all hover:scale-105`}
-              >
-                <Markdown>{msg.text}</Markdown>
-              </div>
-            </div>
-          ))}
-          {isTyping && !isStreamingAudio && (
-            <div className="flex justify-start">
-              <div className="bg-stone-800 p-4 rounded-xl flex gap-2">
-                <span className="w-2 h-2 bg-indigo-700 rounded-full animate-bounce"></span>
-                <span className="w-2 h-2 bg-indigo-700 rounded-full animate-bounce delay-100"></span>
-                <span className="w-2 h-2 bg-indigo-700 rounded-full animate-bounce delay-200"></span>
-              </div>
-            </div>
-          )}
-          {isStreamingAudio && (
-            <div className="flex justify-start">
-              <div className="bg-stone-800 p-4 rounded-xl flex items-center gap-2 text-stone-100">
-                <span className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></span>
-                <span>Streaming audio...</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <Form onSubmit={handleSubmit} className="p-4 border-t border-indigo-900/70">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Seek wisdom... (or use voice)"
-              className="flex-1 bg-stone-800 text-stone-100 placeholder-stone-500 border border-indigo-900/50 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-indigo-700 transition-all duration-300"
-            />
+          {/* Inner Circle */}
+          <div
+            className={`w-32 h-32 rounded-full bg-indigo-900/70 transition-all duration-300 ${isStreamingAudio ? "animate-pulse" : ""
+              } flex items-center justify-center`}
+          >
+            {/* Voice Icon Button */}
             <button
-              type="button"
               onClick={toggleListening}
-              className={`p-3 rounded-xl transition-all duration-300 ${isListening ? "bg-red-900 hover:bg-red-800" : "bg-indigo-900 hover:bg-indigo-800"
-                }`}
+              className="focus:outline-none"
+              aria-label="Toggle speech recognition"
             >
-              <MdKeyboardVoice size={25} className="text-white" />
-            </button>
-            <button
-              type="submit"
-              className="bg-indigo-900 hover:bg-indigo-800 text-indigo-100 px-6 py-3 rounded-xl transition-all duration-300 hover:shadow-lg hover:shadow-indigo-900/30"
-            >
-              Ask
+              <MdKeyboardVoice
+                size={48}
+                className={`text-white transition-transform duration-300 ${isListening ? "scale-110" : ""
+                  }`}
+              />
             </button>
           </div>
-        </Form>
+        </div>
+        {/* Status Indicator */}
+        {isStreamingAudio && (
+          <div className="absolute bottom-0 text-stone-100 text-sm bg-stone-800 px-2 py-1 rounded-full">
+            Thinking...
+          </div>
+        )}
       </div>
     </div>
   );
