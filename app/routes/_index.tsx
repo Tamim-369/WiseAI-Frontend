@@ -29,6 +29,7 @@ declare global {
 export default function Index() {
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isStreamingAudio, setIsStreamingAudio] = useState<boolean>(false);
+  const [noSpeechDetected, setNoSpeechDetected] = useState<boolean>(false);
   const [chatHistory, setChatHistory] = useState<any[]>([]);
   const { initialMessage } = useLoaderData<{ initialMessage: string }>();
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -36,6 +37,7 @@ export default function Index() {
   const mediaSourceRef = useRef<MediaSource | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sourceBufferRef = useRef<SourceBuffer | null>(null);
+  const lastTranscriptRef = useRef<string>(""); // To prevent feedback loop
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -51,7 +53,25 @@ export default function Index() {
     recognition.lang = "en-US";
 
     recognition.onresult = (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript;
+      setNoSpeechDetected(false);
+      const transcript = event.results[event.results.length - 1][0].transcript.trim();
+
+      // Prevent immediate re-transcription of the same output
+      if (transcript === lastTranscriptRef.current && isStreamingAudio) {
+        return;
+      }
+
+      // If audio is playing, stop it immediately
+      if (isStreamingAudio && audioRef.current) {
+        audioRef.current.pause();
+        if (mediaSourceRef.current?.readyState === "open") {
+          mediaSourceRef.current.endOfStream();
+        }
+        setIsStreamingAudio(false);
+        mediaSourceRef.current = null;
+        sourceBufferRef.current = null;
+      }
+
       handleVoiceSubmit(transcript);
     };
 
@@ -60,6 +80,9 @@ export default function Index() {
         console.error("Speech recognition error:", event.error);
       }
       recognitionStateRef.current = "aborted";
+      if (event.error === "no-speech") {
+        setNoSpeechDetected(true);
+      }
       if (isListening && event.error !== "aborted") {
         setTimeout(() => {
           if (recognitionStateRef.current !== "running") {
@@ -98,6 +121,7 @@ export default function Index() {
     if (isListening && recognitionStateRef.current !== "running") {
       recognitionRef.current.start();
       recognitionStateRef.current = "running";
+      setNoSpeechDetected(false);
     } else if (!isListening && recognitionStateRef.current === "running") {
       recognitionRef.current.abort();
       recognitionStateRef.current = "aborted";
@@ -115,13 +139,21 @@ export default function Index() {
         sourceBufferRef.current = mediaSourceRef.current.addSourceBuffer("audio/mpeg");
         sourceBufferRef.current.mode = "sequence";
       });
+
+      audioRef.current.addEventListener("ended", () => {
+        setIsStreamingAudio(false);
+        mediaSourceRef.current = null;
+        sourceBufferRef.current = null;
+      });
     }
   };
 
   const handleVoiceSubmit = async (text: string) => {
-    if (!text.trim()) return;
+    if (!text) return;
+    lastTranscriptRef.current = text; // Store last transcript to check for feedback
     setChatHistory((prev) => [...prev, { role: "user", content: text }]);
     setIsStreamingAudio(true);
+    setNoSpeechDetected(false);
 
     try {
       const serverURL = "http://127.0.0.1:8000";
@@ -145,13 +177,10 @@ export default function Index() {
             if (mediaSourceRef.current?.readyState === "open") {
               mediaSourceRef.current.endOfStream();
             }
-            setIsStreamingAudio(false);
             setChatHistory((prev) => [
               ...prev,
               { role: "assistant", content: "Audio response" },
             ]);
-            mediaSourceRef.current = null;
-            sourceBufferRef.current = null;
             break;
           }
 
@@ -166,28 +195,9 @@ export default function Index() {
       };
 
       await processStream();
-
-      if (isListening && recognitionRef.current) {
-        recognitionRef.current.abort();
-        setTimeout(() => {
-          if (recognitionStateRef.current !== "running") {
-            recognitionRef.current?.start();
-            recognitionStateRef.current = "running";
-          }
-        }, 200);
-      }
     } catch (error) {
       console.error("Streaming error:", error);
       setIsStreamingAudio(false);
-      if (isListening && recognitionRef.current) {
-        recognitionRef.current.abort();
-        setTimeout(() => {
-          if (recognitionStateRef.current !== "running") {
-            recognitionRef.current?.start();
-            recognitionStateRef.current = "running";
-          }
-        }, 200);
-      }
     }
   };
 
@@ -225,7 +235,12 @@ export default function Index() {
         {/* Status Indicator */}
         {isStreamingAudio && (
           <div className="absolute bottom-0 text-stone-100 text-sm bg-stone-800 px-2 py-1 rounded-full">
-            Thinking...
+            Speaking...
+          </div>
+        )}
+        {isListening && !isStreamingAudio && noSpeechDetected && (
+          <div className="absolute bottom-0 text-stone-100 text-sm bg-stone-800 px-2 py-1 rounded-full">
+            Speak now...
           </div>
         )}
       </div>
