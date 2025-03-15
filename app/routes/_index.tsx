@@ -133,11 +133,11 @@ export default function Index() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-indigo-950 to-purple-950 flex flex-col items-center p-6">
-      <div className="w-full max-w-3xl flex flex-col h-[85vh] bg-gray-800/90 rounded-xl shadow-2xl overflow-hidden">
+    <div className="min-h-screen bg-gray-800/90 sm:bg-gradient-to-br from-gray-900 via-indigo-950 to-purple-950 flex flex-col items-center sm:p-6">
+      <div className="w-full max-w-3xl flex flex-col h-[100dvh] sm:h-[85vh] bg-gray-800/90 sm:rounded-xl shadow-2xl ">
         <div
           ref={chatContainerRef}
-          className="flex-grow p-6 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-indigo-600 scrollbar-track-gray-700"
+          className="flex-grow p-2 sm:p-6 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-indigo-600 scrollbar-track-gray-700"
         >
           {chatHistory.map((msg, index) => (
             <div
@@ -165,12 +165,12 @@ export default function Index() {
             </div>
           )}
         </div>
-        <div className="p-4 border-t border-gray-700 bg-gray-800/95 flex items-center space-x-3">
+        <div className=" p-2 sm:p-4 border-t border-gray-700 bg-gray-800/95 flex items-center space-x-3">
           <button
             onClick={isRecording ? stopRecording : startRecording}
-            className={`p-3 rounded-full transition-all duration-200 ${isRecording
-              ? "bg-red-600 hover:bg-red-700"
-              : "bg-indigo-600 hover:bg-indigo-700"
+            className={`sm:p-3 rounded-full transition-all duration-200 ${isRecording
+              ? "sm:bg-red-600 sm:hover:bg-red-700"
+              : "sm:bg-indigo-600 sm:hover:bg-indigo-700"
               }`}
           >
             <MdKeyboardVoice size={24} className="text-white" />
@@ -181,14 +181,14 @@ export default function Index() {
             onChange={(e) => setInputText(e.target.value)}
             onKeyPress={(e) => e.key === "Enter" && sendMessage()}
             placeholder="Type or speak your message..."
-            className="flex-grow p-3 bg-gray-900/80 text-gray-100 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all duration-200"
+            className="flex-grow w-full p-3 bg-gray-900/80 text-gray-100 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all duration-200"
           />
           <button
             onClick={sendMessage}
             disabled={isLoading}
-            className={`p-3 rounded-full transition-all duration-200 ${isLoading
-              ? "bg-gray-600 cursor-not-allowed"
-              : "bg-indigo-600 hover:bg-indigo-700"
+            className={`sm:p-3 rounded-full transition-all duration-200 ${isLoading
+              ? "sm:bg-gray-600 cursor-not-allowed"
+              : "sm:bg-indigo-600 sm:hover:bg-indigo-700"
               }`}
           >
             <MdSend size={24} className="text-white" />
