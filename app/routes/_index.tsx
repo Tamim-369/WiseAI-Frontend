@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunction } from "@remix-run/node";
 import { useLoaderData, Form } from "@remix-run/react";
 import Markdown from "markdown-to-jsx";
+import axios from "axios";
 
 export const loader: LoaderFunction = async () => {
   return json({ initialMessage: "Welcome to Wise AI" });
@@ -18,7 +19,7 @@ export default function Index() {
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [chatHistory, setChatHistory] = useState<any>([]);
   const { initialMessage } = useLoaderData<{ initialMessage: string }>();
-  
+
   // Create a ref for the chat container
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -33,6 +34,78 @@ export default function Index() {
     setMessages([{ text: initialMessage, isUser: false }]);
   }, [initialMessage]);
 
+  const speakText = async (text: string) => {
+    // Basic Markdown cleanup function
+    const stripMarkdown = (input: string): string => {
+      return input
+        .replace(/[#*_-]{1,3}/g, "") // Remove headings (#), bold/italic (**/*/-), etc.
+        .replace(/\[(.*?)\]\(.*?\)/g, "$1") // Extract link text, remove URLs ([text](url) -> text)
+        .replace(/`{1,3}.*?`{1,3}/g, match => match.replace(/`/g, "")) // Remove backticks, keep code content
+        .replace(/^\s+|\s+$/g, "") // Trim extra whitespace
+        .replace(/\s+/g, " "); // Normalize spaces
+    };
+
+    try {
+      const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean).map(stripMarkdown);
+      const mediaSource = new MediaSource();
+      const audio = new Audio();
+      audio.src = URL.createObjectURL(mediaSource);
+
+      mediaSource.addEventListener("sourceopen", async () => {
+        const sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
+        let isFirstChunk = true;
+
+        for (const sentence of sentences) {
+          const response = await fetch(
+            "https://api.elevenlabs.io/v1/text-to-speech/pNInz6obpgDQGcFmaJgB/stream",
+            {
+              method: "POST",
+              headers: {
+                "xi-api-key": "sk_4cca96141ec51dbce34251e512d35e90a831b01c0b7c8dd3",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                text: sentence,
+                model_id: "eleven_monolingual_v1",
+                voice_settings: {
+                  stability: 0.2,
+                  similarity_boost: 1.0,
+                },
+              }),
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+          }
+
+          const reader = response.body!.getReader();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            try {
+              sourceBuffer.appendBuffer(value);
+              if (isFirstChunk) {
+                audio.play();
+                isFirstChunk = false;
+              }
+            } catch (e) {
+              console.warn("Buffer full, waiting...", e);
+              await new Promise(resolve => sourceBuffer.addEventListener("updateend", resolve, { once: true }));
+              sourceBuffer.appendBuffer(value);
+            }
+          }
+        }
+
+        mediaSource.endOfStream();
+      }, { once: true });
+
+    } catch (error: any) {
+      console.error("ElevenLabs Streaming Error:", error.message);
+    }
+  };
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -42,7 +115,7 @@ export default function Index() {
     setIsTyping(true);
 
     try {
-      setChatHistory((prev:any) => [
+      setChatHistory((prev: any) => [
         ...prev,
         { role: "user", content: input },
       ]);
@@ -59,7 +132,7 @@ export default function Index() {
       });
 
       const data: { data: { answer: string } } = await response.json();
-      setChatHistory((prev:any) => [
+      setChatHistory((prev: any) => [
         ...prev,
         { role: "user", content: input },
         { role: "assistant", content: data.data.answer },
@@ -69,12 +142,14 @@ export default function Index() {
         setIsTyping(false);
       }, 1000);
       console.log(chatHistory);
+      await speakText(data.data.answer)
     } catch (error) {
       console.log(error);
       setMessages(prev => [...prev, { text: "The wise one ponders in silence...", isUser: false }]);
       setIsTyping(false);
     }
   };
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-stone-950 via-indigo-950 to-purple-950 flex items-center justify-center p-4">
@@ -89,7 +164,7 @@ export default function Index() {
         </div>
 
         {/* Chat Area - added ref here */}
-        <div 
+        <div
           ref={chatContainerRef}
           className="h-[500px] overflow-y-auto p-6 space-y-4 scrollbar-thin scrollbar-thumb-indigo-900 scrollbar-track-stone-900"
         >
