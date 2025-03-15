@@ -1,22 +1,44 @@
 import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunction } from "@remix-run/node";
-import { MdKeyboardVoice } from "react-icons/md";
+import { MdKeyboardVoice, MdSend } from "react-icons/md";
 import { useLoaderData } from "@remix-run/react";
 
-export const loader: LoaderFunction = async () => {
-  return json({ initialMessage: "Welcome to Wise AI" });
-};
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 
 interface SpeechRecognition extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
-  start(): void;
-  stop(): void;
-  abort(): void;
-  onresult: ((event: any) => void) | null;
-  onerror: ((event: any) => void) | null;
-  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  onerror: (event: SpeechRecognitionErrorEvent) => void;
+  onend: () => void;
+}
+
+interface SpeechRecognitionEvent {
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionResultList {
+  [index: number]: SpeechRecognitionResult;
+  length: number;
+}
+
+interface SpeechRecognitionResult {
+  [index: number]: SpeechAlternative;
+  length: number;
+}
+
+interface SpeechAlternative {
+  transcript: string;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
 }
 
 declare global {
@@ -26,224 +48,180 @@ declare global {
   }
 }
 
+export const loader: LoaderFunction = async () => {
+  return json({ initialMessage: "Welcome to Wise AI" });
+};
+
 export default function Index() {
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const [isStreamingAudio, setIsStreamingAudio] = useState<boolean>(false);
-  const [noSpeechDetected, setNoSpeechDetected] = useState<boolean>(false);
-  const [chatHistory, setChatHistory] = useState<any[]>([]);
+  const [inputText, setInputText] = useState<string>("");
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const { initialMessage } = useLoaderData<{ initialMessage: string }>();
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const recognitionStateRef = useRef<"idle" | "running" | "aborted">("idle");
-  const mediaSourceRef = useRef<MediaSource | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const sourceBufferRef = useRef<SourceBuffer | null>(null);
-  const lastTranscriptRef = useRef<string>(""); // To prevent feedback loop
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  // Initialize Speech Recognition
   useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatHistory]);
+
+  const startRecording = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.error("Speech Recognition not supported in this browser");
+      console.error("Speech Recognition API not supported");
       return;
     }
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = "en-US";
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = false;
+    recognitionRef.current.interimResults = true;
+    recognitionRef.current.lang = "en-US";
 
-    recognition.onresult = (event) => {
-      setNoSpeechDetected(false);
-      const transcript = event.results[event.results.length - 1][0].transcript.trim();
-
-      // Prevent immediate re-transcription of the same output
-      if (transcript === lastTranscriptRef.current && isStreamingAudio) {
-        return;
-      }
-
-      // If audio is playing, stop it immediately
-      if (isStreamingAudio && audioRef.current) {
-        audioRef.current.pause();
-        if (mediaSourceRef.current?.readyState === "open") {
-          mediaSourceRef.current.endOfStream();
-        }
-        setIsStreamingAudio(false);
-        mediaSourceRef.current = null;
-        sourceBufferRef.current = null;
-      }
-
-      handleVoiceSubmit(transcript);
+    recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0].transcript)
+        .join("");
+      setInputText(transcript);
     };
 
-    recognition.onerror = (event) => {
-      if (event.error !== "aborted") {
-        console.error("Speech recognition error:", event.error);
-      }
-      recognitionStateRef.current = "aborted";
-      if (event.error === "no-speech") {
-        setNoSpeechDetected(true);
-      }
-      if (isListening && event.error !== "aborted") {
-        setTimeout(() => {
-          if (recognitionStateRef.current !== "running") {
-            recognition.start();
-            recognitionStateRef.current = "running";
-          }
-        }, 200);
-      }
+    recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
+      console.error("Speech recognition error:", event.error);
+      setIsRecording(false);
     };
 
-    recognition.onend = () => {
-      recognitionStateRef.current = "idle";
-      if (isListening) {
-        setTimeout(() => {
-          if (recognitionStateRef.current !== "running") {
-            recognition.start();
-            recognitionStateRef.current = "running";
-          }
-        }, 200);
-      }
+    recognitionRef.current.onend = () => {
+      setIsRecording(false);
     };
 
-    recognitionRef.current = recognition;
+    recognitionRef.current.start();
+    setIsRecording(true);
+  };
 
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-        recognitionStateRef.current = "aborted";
-      }
-    };
-  }, [isListening]);
-
-  // Control listening state
-  useEffect(() => {
-    if (!recognitionRef.current) return;
-    if (isListening && recognitionStateRef.current !== "running") {
-      recognitionRef.current.start();
-      recognitionStateRef.current = "running";
-      setNoSpeechDetected(false);
-    } else if (!isListening && recognitionStateRef.current === "running") {
-      recognitionRef.current.abort();
-      recognitionStateRef.current = "aborted";
-    }
-  }, [isListening]);
-
-  const setupMediaSource = () => {
-    if (!mediaSourceRef.current) {
-      mediaSourceRef.current = new MediaSource();
-      audioRef.current = new Audio(URL.createObjectURL(mediaSourceRef.current));
-      audioRef.current.autoplay = true;
-
-      mediaSourceRef.current.addEventListener("sourceopen", () => {
-        if (!mediaSourceRef.current) return;
-        sourceBufferRef.current = mediaSourceRef.current.addSourceBuffer("audio/mpeg");
-        sourceBufferRef.current.mode = "sequence";
-      });
-
-      audioRef.current.addEventListener("ended", () => {
-        setIsStreamingAudio(false);
-        mediaSourceRef.current = null;
-        sourceBufferRef.current = null;
-      });
+  const stopRecording = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
     }
   };
 
-  const handleVoiceSubmit = async (text: string) => {
-    if (!text) return;
-    lastTranscriptRef.current = text; // Store last transcript to check for feedback
-    setChatHistory((prev) => [...prev, { role: "user", content: text }]);
-    setIsStreamingAudio(true);
-    setNoSpeechDetected(false);
+  const sendMessage = async () => {
+    if (!inputText.trim()) return;
+    const userMessage: ChatMessage = { role: "user", content: inputText };
+    setChatHistory((prev) => [...prev, userMessage]);
+    setInputText("");
+    setIsLoading(true);
 
     try {
-      const serverURL = "http://127.0.0.1:8000";
-      const response = await fetch(`${serverURL}/query/`, {
+      const response = await fetch("http://127.0.0.1:8000/query/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: text, chat_history: chatHistory }),
+        body: JSON.stringify({ question: inputText, chat_history: chatHistory }),
       });
-
-      if (!response.ok || !response.body) {
-        throw new Error("Failed to fetch audio stream");
+      if (response.ok) {
+        const data = await response.json() as { answer: string };
+        setChatHistory((prev) => [...prev, { role: "assistant", content: data.answer }]);
+      } else {
+        console.error("Query error:", response.status);
+        setChatHistory((prev) => [...prev, { role: "assistant", content: "Sorry, something went wrong." }])
       }
-
-      setupMediaSource();
-      const reader = response.body.getReader();
-
-      const processStream = async () => {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            if (mediaSourceRef.current?.readyState === "open") {
-              mediaSourceRef.current.endOfStream();
-            }
-            setChatHistory((prev) => [
-              ...prev,
-              { role: "assistant", content: "Audio response" },
-            ]);
-            break;
-          }
-
-          if (sourceBufferRef.current && !sourceBufferRef.current.updating) {
-            try {
-              sourceBufferRef.current.appendBuffer(value);
-            } catch (error) {
-              console.error("Error appending to source buffer:", error);
-            }
-          }
-        }
-      };
-
-      await processStream();
     } catch (error) {
-      console.error("Streaming error:", error);
-      setIsStreamingAudio(false);
+      console.error("Fetch error:", error);
+      setChatHistory((prev) => [...prev, { role: "assistant", content: "Error connecting to server." }])
     }
-  };
-
-  const toggleListening = () => {
-    setIsListening((prev) => !prev);
+    setIsLoading(false);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-stone-950 via-indigo-950 to-purple-950 flex items-center justify-center">
-      <div className="relative flex items-center justify-center">
-        {/* Outer Circle */}
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-indigo-950 to-purple-950 flex flex-col items-center p-6">
+      <div className="w-full max-w-3xl flex flex-col h-[85vh] bg-gray-800/90 rounded-xl shadow-2xl overflow-hidden">
         <div
-          className={`w-48 h-48 rounded-full bg-stone-900/95 border-4 transition-all duration-300 ${isListening ? "border-red-900" : "border-indigo-900"
-            } flex items-center justify-center`}
+          ref={chatContainerRef}
+          className="flex-grow p-6 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-indigo-600 scrollbar-track-gray-700"
         >
-          {/* Inner Circle */}
-          <div
-            className={`w-32 h-32 rounded-full bg-indigo-900/70 transition-all duration-300 ${isStreamingAudio ? "animate-pulse" : ""
-              } flex items-center justify-center`}
-          >
-            {/* Voice Icon Button */}
-            <button
-              onClick={toggleListening}
-              className="focus:outline-none"
-              aria-label="Toggle speech recognition"
+          {chatHistory.map((msg, index) => (
+            <div
+              key={index}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} animate-slide-in`}
             >
-              <MdKeyboardVoice
-                size={48}
-                className={`text-white transition-transform duration-300 ${isListening ? "scale-110" : ""
+              <div
+                className={`max-w-xs md:max-w-md p-4 rounded-lg shadow-md transition-all duration-300 ${msg.role === "user"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-gray-700 text-gray-100 border-l-4 border-indigo-500"
                   }`}
-              />
-            </button>
-          </div>
+              >
+                {msg.content}
+              </div>
+            </div>
+          ))}
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="max-w-xs md:max-w-md p-4 rounded-lg bg-gray-700 text-gray-100 flex items-center space-x-2 animate-pulse">
+                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-100"></div>
+                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-200"></div>
+                <span>Thinking...</span>
+              </div>
+            </div>
+          )}
         </div>
-        {/* Status Indicator */}
-        {isStreamingAudio && (
-          <div className="absolute bottom-0 text-stone-100 text-sm bg-stone-800 px-2 py-1 rounded-full">
-            Speaking...
-          </div>
-        )}
-        {isListening && !isStreamingAudio && noSpeechDetected && (
-          <div className="absolute bottom-0 text-stone-100 text-sm bg-stone-800 px-2 py-1 rounded-full">
-            Speak now...
-          </div>
-        )}
+        <div className="p-4 border-t border-gray-700 bg-gray-800/95 flex items-center space-x-3">
+          <button
+            onClick={isRecording ? stopRecording : startRecording}
+            className={`p-3 rounded-full transition-all duration-200 ${isRecording
+              ? "bg-red-600 hover:bg-red-700"
+              : "bg-indigo-600 hover:bg-indigo-700"
+              }`}
+          >
+            <MdKeyboardVoice size={24} className="text-white" />
+          </button>
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyPress={(e) => e.key === "Enter" && sendMessage()}
+            placeholder="Type or speak your message..."
+            className="flex-grow p-3 bg-gray-900/80 text-gray-100 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all duration-200"
+          />
+          <button
+            onClick={sendMessage}
+            disabled={isLoading}
+            className={`p-3 rounded-full transition-all duration-200 ${isLoading
+              ? "bg-gray-600 cursor-not-allowed"
+              : "bg-indigo-600 hover:bg-indigo-700"
+              }`}
+          >
+            <MdSend size={24} className="text-white" />
+          </button>
+        </div>
       </div>
+      <style>{`
+        .scrollbar-thin {
+          scrollbar-width: thin;
+        }
+        .scrollbar-thumb-indigo-600 {
+          scrollbar-color: #4f46e5 #374151;
+        }
+        .animate-slide-in {
+          animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .delay-100 {
+          animation-delay: 0.1s;
+        }
+        .delay-200 {
+          animation-delay: 0.2s;
+        }
+      `}</style>
     </div>
   );
 }
