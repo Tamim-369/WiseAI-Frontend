@@ -66,7 +66,7 @@ export default function Index() {
 
   const speakText = async (text: string) => {
     try {
-      const response = await fetch("http://wiseai.onrender.com/query", {
+      const response = await fetch("https://wiseai.onrender.com/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
