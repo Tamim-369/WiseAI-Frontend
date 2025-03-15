@@ -45,50 +45,56 @@ export default function Index() {
   // Initialize Speech Recognition
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = false;
-      recognition.lang = 'en-US';
-
-      recognition.onresult = (event) => {
-        const transcript = event.results[event.results.length - 1][0].transcript;
-        setInput(transcript);
-        handleVoiceSubmit(transcript);
-      };
-
-      recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        if (isListening && event.error !== 'aborted') {
-          recognition.start();
-        }
-      };
-
-      recognition.onend = () => {
-        if (isListening) {
-          recognition.start();
-        }
-      };
-
-      recognitionRef.current = recognition;
+    if (!SpeechRecognition) {
+      console.error("Speech Recognition not supported in this browser");
+      return;
     }
 
-    // Cleanup on unmount
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[event.results.length - 1][0].transcript;
+      setInput(transcript);
+      handleVoiceSubmit(transcript);
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      if (isListening && event.error !== 'aborted') {
+        setTimeout(() => {
+          if (isListening) recognition.start();
+        }, 100);
       }
     };
-  }, []); // Removed isListening from dependencies
 
-  // Handle listening state changes
+    recognition.onend = () => {
+      if (isListening) {
+        setTimeout(() => {
+          if (isListening) recognition.start();
+        }, 100);
+      }
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+    };
+  }, []);
+
+  // Control listening state
   useEffect(() => {
     if (!recognitionRef.current) return;
 
     if (isListening) {
       recognitionRef.current.start();
     } else {
-      recognitionRef.current.abort(); // Use abort to force stop
+      recognitionRef.current.abort();
     }
   }, [isListening]);
 
@@ -142,11 +148,21 @@ export default function Index() {
       setTimeout(() => {
         setMessages(prev => [...prev, { text: data.data, isUser: false }]);
         setIsTyping(false);
+        // Restart recognition after processing if still listening
+        if (isListening && recognitionRef.current) {
+          recognitionRef.current.abort();
+          setTimeout(() => recognitionRef.current?.start(), 100);
+        }
       }, 1000);
     } catch (error) {
       console.log(error);
       setMessages(prev => [...prev, { text: "The wise one ponders in silence...", isUser: false }]);
       setIsTyping(false);
+      // Restart recognition after error if still listening
+      if (isListening && recognitionRef.current) {
+        recognitionRef.current.abort();
+        setTimeout(() => recognitionRef.current?.start(), 100);
+      }
     }
   };
 
