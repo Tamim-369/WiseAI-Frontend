@@ -36,11 +36,15 @@ export default function Index() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState<string>("");
   const [isTyping, setIsTyping] = useState<boolean>(false);
+  const [isStreamingAudio, setIsStreamingAudio] = useState<boolean>(false);
   const [chatHistory, setChatHistory] = useState<any[]>([]);
   const [isListening, setIsListening] = useState<boolean>(false);
   const { initialMessage } = useLoaderData<{ initialMessage: string }>();
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const mediaSourceRef = useRef<MediaSource | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const sourceBufferRef = useRef<SourceBuffer | null>(null);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -53,7 +57,7 @@ export default function Index() {
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = "en-US";
 
     recognition.onresult = (event) => {
       const transcript = event.results[event.results.length - 1][0].transcript;
@@ -62,19 +66,15 @@ export default function Index() {
     };
 
     recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      if (isListening && event.error !== 'aborted') {
-        setTimeout(() => {
-          if (isListening) recognition.start();
-        }, 100);
+      console.error("Speech recognition error:", event.error);
+      if (isListening && event.error !== "aborted") {
+        setTimeout(() => recognition.start(), 100);
       }
     };
 
     recognition.onend = () => {
       if (isListening) {
-        setTimeout(() => {
-          if (isListening) recognition.start();
-        }, 100);
+        setTimeout(() => recognition.start(), 100);
       }
     };
 
@@ -85,17 +85,13 @@ export default function Index() {
         recognitionRef.current.abort();
       }
     };
-  }, []);
+  }, [isListening]);
 
   // Control listening state
   useEffect(() => {
     if (!recognitionRef.current) return;
-
-    if (isListening) {
-      recognitionRef.current.start();
-    } else {
-      recognitionRef.current.abort();
-    }
+    if (isListening) recognitionRef.current.start();
+    else recognitionRef.current.abort();
   }, [isListening]);
 
   // Scroll to bottom
@@ -103,7 +99,7 @@ export default function Index() {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
-  }, [messages, isTyping]);
+  }, [messages, isTyping, isStreamingAudio]);
 
   useEffect(() => {
     setMessages([{ text: initialMessage, isUser: false }]);
@@ -120,45 +116,82 @@ export default function Index() {
     await processMessage(text);
   };
 
+  const setupMediaSource = () => {
+    if (!mediaSourceRef.current) {
+      mediaSourceRef.current = new MediaSource();
+      audioRef.current = new Audio(URL.createObjectURL(mediaSourceRef.current));
+      audioRef.current.autoplay = true;
+
+      mediaSourceRef.current.addEventListener("sourceopen", () => {
+        if (!mediaSourceRef.current) return;
+        sourceBufferRef.current = mediaSourceRef.current.addSourceBuffer("audio/mpeg");
+        sourceBufferRef.current.mode = "sequence";
+      });
+    }
+  };
+
   const processMessage = async (text: string) => {
-    setMessages(prev => [...prev, { text, isUser: true }]);
+    setMessages((prev) => [...prev, { text, isUser: true }]);
     setInput("");
     setIsTyping(true);
 
     try {
-      setChatHistory(prev => [...prev, { role: "user", content: text }]);
-      const serverURL = 'https://wiseai.onrender.com';
-      const response = await fetch(`${serverURL}/query`, {
-        method: "post",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question: text,
-          chat_history: chatHistory
-        })
+      setChatHistory((prev) => [...prev, { role: "user", content: text }]);
+      const serverURL = "http://127.0.0.1:8000";
+      const response = await fetch(`${serverURL}/query/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: text, chat_history: chatHistory }),
       });
 
-      const data: any = await response.json();
-      setChatHistory(prev => [
-        ...prev,
-        { role: "user", content: text },
-        { role: "assistant", content: data.data },
-      ]);
-      setTimeout(() => {
-        setMessages(prev => [...prev, { text: data.data, isUser: false }]);
-        setIsTyping(false);
-        // Restart recognition after processing if still listening
-        if (isListening && recognitionRef.current) {
-          recognitionRef.current.abort();
-          setTimeout(() => recognitionRef.current?.start(), 100);
+      if (!response.ok || !response.body) {
+        throw new Error("Failed to fetch audio stream");
+      }
+
+      setupMediaSource();
+      setIsStreamingAudio(true);
+      const reader = response.body.getReader();
+
+      const processStream = async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (mediaSourceRef.current?.readyState === "open") {
+              mediaSourceRef.current.endOfStream();
+            }
+            setIsTyping(false);
+            setIsStreamingAudio(false);
+            setMessages((prev) => [...prev, { text: "Audio response completed", isUser: false }]);
+            setChatHistory((prev) => [
+              ...prev,
+              { role: "assistant", content: "Audio response" },
+            ]);
+            mediaSourceRef.current = null;
+            sourceBufferRef.current = null;
+            break;
+          }
+
+          if (sourceBufferRef.current && !sourceBufferRef.current.updating) {
+            try {
+              sourceBufferRef.current.appendBuffer(value);
+            } catch (error) {
+              console.error("Error appending to source buffer:", error);
+            }
+          }
         }
-      }, 1000);
+      };
+
+      await processStream();
+
+      if (isListening && recognitionRef.current) {
+        recognitionRef.current.abort();
+        setTimeout(() => recognitionRef.current?.start(), 100);
+      }
     } catch (error) {
-      console.log(error);
-      setMessages(prev => [...prev, { text: "The wise one ponders in silence...", isUser: false }]);
+      console.error("Streaming error:", error);
+      setMessages((prev) => [...prev, { text: "The wise one ponders in silence...", isUser: false }]);
       setIsTyping(false);
-      // Restart recognition after error if still listening
+      setIsStreamingAudio(false);
       if (isListening && recognitionRef.current) {
         recognitionRef.current.abort();
         setTimeout(() => recognitionRef.current?.start(), 100);
@@ -167,7 +200,7 @@ export default function Index() {
   };
 
   const toggleListening = () => {
-    setIsListening(prev => !prev);
+    setIsListening((prev) => !prev);
   };
 
   return (
@@ -188,24 +221,32 @@ export default function Index() {
           {messages.map((msg, index) => (
             <div
               key={index}
-              className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'} animate-slideIn`}
+              className={`flex ${msg.isUser ? "justify-end" : "justify-start"} animate-slideIn`}
             >
               <div
                 className={`max-w-[70%] p-4 rounded-xl ${msg.isUser
-                  ? 'bg-indigo-900 text-indigo-100'
-                  : 'bg-stone-800 text-stone-100 border border-indigo-900/30'
+                  ? "bg-indigo-900 text-indigo-100"
+                  : "bg-stone-800 text-stone-100 border border-indigo-900/30"
                   } transform transition-all hover:scale-105`}
               >
                 <Markdown>{msg.text}</Markdown>
               </div>
             </div>
           ))}
-          {isTyping && (
+          {isTyping && !isStreamingAudio && (
             <div className="flex justify-start">
               <div className="bg-stone-800 p-4 rounded-xl flex gap-2">
                 <span className="w-2 h-2 bg-indigo-700 rounded-full animate-bounce"></span>
                 <span className="w-2 h-2 bg-indigo-700 rounded-full animate-bounce delay-100"></span>
                 <span className="w-2 h-2 bg-indigo-700 rounded-full animate-bounce delay-200"></span>
+              </div>
+            </div>
+          )}
+          {isStreamingAudio && (
+            <div className="flex justify-start">
+              <div className="bg-stone-800 p-4 rounded-xl flex items-center gap-2 text-stone-100">
+                <span className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></span>
+                <span>Streaming audio...</span>
               </div>
             </div>
           )}
@@ -223,9 +264,7 @@ export default function Index() {
             <button
               type="button"
               onClick={toggleListening}
-              className={`p-3 rounded-xl transition-all duration-300 ${isListening
-                  ? 'bg-red-900 hover:bg-red-800'
-                  : 'bg-indigo-900 hover:bg-indigo-800'
+              className={`p-3 rounded-xl transition-all duration-300 ${isListening ? "bg-red-900 hover:bg-red-800" : "bg-indigo-900 hover:bg-indigo-800"
                 }`}
             >
               <MdKeyboardVoice size={25} className="text-white" />
