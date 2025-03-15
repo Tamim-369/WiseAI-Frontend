@@ -66,9 +66,10 @@ export default function Index() {
 
   const speakText = async (text: string) => {
     try {
-      const response = await fetch("https://wiseai.onrender.com/query", {
+      const response = await fetch("http://127.0.0.1:8000/query", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", },
+        mode: "cors",
         body: JSON.stringify({
           question: text,
           chat_history: chatHistory,
